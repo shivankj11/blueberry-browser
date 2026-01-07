@@ -71,16 +71,42 @@ const StreamingText: React.FC<{ content: string }> = ({ content }) => {
     )
 }
 
+// Citation Component - displays citation marker with tooltip
+const Citation: React.FC<{ tag: string; text: string }> = ({ tag, text }) => {
+    const [isVisible, setIsVisible] = useState(false)
+
+    return (
+        <span className="relative inline-block ml-0.5">
+            <span
+                className="text-primary cursor-pointer hover:underline text-sm"
+                onMouseEnter={() => setIsVisible(true)}
+                onMouseLeave={() => setIsVisible(false)}
+            >
+                ({tag})
+            </span>
+            {isVisible && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2
+                              bg-popover text-popover-foreground text-xs rounded-lg shadow-lg
+                              border border-border whitespace-nowrap z-50 animate-fade-in">
+                    {text}
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px
+                                  border-4 border-transparent border-t-popover" />
+                </div>
+            )}
+        </span>
+    )
+}
+
 // Markdown Renderer Component
 const Markdown: React.FC<{ content: string }> = ({ content }) => (
-    <div className="prose prose-sm dark:prose-invert max-w-none 
-                    prose-headings:text-foreground prose-p:text-foreground 
-                    prose-strong:text-foreground prose-ul:text-foreground 
+    <div className="prose prose-sm dark:prose-invert max-w-none
+                    prose-headings:text-foreground prose-p:text-foreground
+                    prose-strong:text-foreground prose-ul:text-foreground
                     prose-ol:text-foreground prose-li:text-foreground
                     prose-a:text-primary hover:prose-a:underline
-                    prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 
+                    prose-code:bg-muted prose-code:px-1 prose-code:py-0.5
                     prose-code:rounded prose-code:text-sm prose-code:text-foreground
-                    prose-pre:bg-muted dark:prose-pre:bg-muted/50 prose-pre:p-3 
+                    prose-pre:bg-muted dark:prose-pre:bg-muted/50 prose-pre:p-3
                     prose-pre:rounded-lg prose-pre:overflow-x-auto">
         <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkBreaks]}
@@ -126,7 +152,10 @@ const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean }> = (
             {isStreaming ? (
                 <StreamingText content={content} />
             ) : (
-                <Markdown content={content} />
+                <>
+                    <Markdown content={content} />
+                    <Citation tag={"Source"} text="citation text" />
+                </>
             )}
         </div>
     </div>
