@@ -22,7 +22,7 @@ interface StreamChunk {
 type LLMProvider = "openai" | "anthropic";
 
 const DEFAULT_MODELS: Record<LLMProvider, string> = {
-  openai: "gpt-4o-mini",
+  openai: "gpt-5-mini",
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
@@ -242,7 +242,7 @@ export class LLMClient {
       const result = await streamText({
         model: this.model,
         messages,
-        temperature: DEFAULT_TEMPERATURE,
+        // temperature: DEFAULT_TEMPERATURE,
         maxRetries: 3,
         abortSignal: undefined, // Could add abort controller for cancellation
       });
