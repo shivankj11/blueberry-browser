@@ -89,11 +89,63 @@ export class Tab {
     return await this.webContentsView.webContents.executeJavaScript(code);
   }
 
+  // Ensure the DOM is ready before attempting to read text/HTML
+  private async waitForDomReady(timeoutMs: number = 5000): Promise<void> {
+    const wc = this.webContentsView.webContents;
+
+    if (!wc.isLoadingMainFrame()) {
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error("waitForDomReady timeout"));
+      }, timeoutMs);
+
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        cleanup();
+        resolve();
+      };
+
+      const fail = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        cleanup();
+        reject(new Error("did-fail-load"));
+      };
+
+      const cleanup = () => {
+        wc.off("dom-ready", onDomReady);
+        wc.off("did-finish-load", onDidFinishLoad);
+        wc.off("did-fail-load", onFail);
+      };
+
+      const onDomReady = () => done();
+      const onDidFinishLoad = () => done();
+      const onFail = () => fail();
+
+      wc.once("dom-ready", onDomReady);
+      wc.once("did-finish-load", onDidFinishLoad);
+      wc.once("did-fail-load", onFail);
+    });
+  }
+
   async getTabHtml(): Promise<string> {
+    await this.waitForDomReady();
     return await this.runJs("document.documentElement.outerHTML");
   }
 
   async getTabText(): Promise<string> {
+    await this.waitForDomReady();
     return await this.runJs("document.documentElement.innerText");
   }
 
