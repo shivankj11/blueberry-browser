@@ -1,10 +1,11 @@
 import { WebContents } from "electron";
-import { streamText, type LanguageModel, type CoreMessage } from "ai";
+import { streamObject, type LanguageModel, type CoreMessage } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
 import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
+import { z } from "zod";
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -14,10 +15,27 @@ interface ChatRequest {
   messageId: string;
 }
 
+interface Citation {
+  text: string;
+  source: "screenshot" | "page_content" | "url";
+}
+
 interface StreamChunk {
   content: string;
   isComplete: boolean;
+  citations?: Citation[];
 }
+
+// Zod schema for structured LLM output with citations
+const CitationSchema = z.object({
+  text: z.string().describe("The exact quote or excerpt from the source that supports the answer"),
+  source: z.enum(["screenshot", "page_content", "url"]).describe("Where this information came from: screenshot, page_content, or url"),
+});
+
+const ResponseWithCitationsSchema = z.object({
+  response: z.string().describe("The main response to the user's question"),
+  citations: z.array(CitationSchema).describe("Array of citations with exact quotes from the page content or screenshot that support the response"),
+});
 
 type LLMProvider = "openai" | "anthropic";
 
@@ -36,6 +54,7 @@ export class LLMClient {
   private readonly modelName: string;
   private readonly model: LanguageModel | null;
   private messages: CoreMessage[] = [];
+  private citations: Map<number, Citation[]> = new Map();
 
   constructor(webContents: WebContents) {
     this.webContents = webContents;
@@ -163,6 +182,7 @@ export class LLMClient {
 
   clearMessages(): void {
     this.messages = [];
+    this.citations.clear();
     this.sendMessagesToRenderer();
   }
 
@@ -170,8 +190,21 @@ export class LLMClient {
     return this.messages;
   }
 
+  getCitations(): Map<number, Citation[]> {
+    return this.citations;
+  }
+
   private sendMessagesToRenderer(): void {
-    this.webContents.send("chat-messages-updated", this.messages);
+    // Convert citations map to a plain object for JSON serialization
+    const citationsObj: Record<number, Citation[]> = {};
+    this.citations.forEach((value, key) => {
+      citationsObj[key] = value;
+    });
+
+    this.webContents.send("chat-messages-updated", {
+      messages: this.messages,
+      citations: citationsObj,
+    });
   }
 
   private async prepareMessagesWithContext(_request: ChatRequest): Promise<CoreMessage[]> {
@@ -219,7 +252,15 @@ export class LLMClient {
 
     parts.push(
       "\nPlease provide helpful, accurate, and contextual responses about the current webpage.",
-      "If the user asks about specific content, refer to the page content and/or screenshot provided."
+      "If the user asks about specific content, refer to the page content and/or screenshot provided.",
+      "\n\nCITATION GUIDELINES:",
+      "- Only include citations when you directly reference SPECIFIC information from the page content, screenshot, or URL.",
+      "- Citations should be VERY concise and only refer to SPECIFIC details, not general information.",
+      "- Do NOT over-cite. For general questions about what a website is, 0-2 citations are sufficient.",
+      "- Citations should contain the EXACT text/quote from the source that supports your answer.",
+      "- Specify the source type: 'page_content' (for text content), 'screenshot' (for visual elements), or 'url' (for URL-based info).",
+      "- If you're providing general knowledge or common information about a website, you don't need citations.",
+      "- Only cite when it adds value and supports specific claims you're making."
     );
 
     return parts.join("\n");
@@ -239,63 +280,82 @@ export class LLMClient {
     }
 
     try {
-      const result = await streamText({
+      const result = await streamObject({
         model: this.model,
         messages,
-        // temperature: DEFAULT_TEMPERATURE,
+        schema: ResponseWithCitationsSchema,
         maxRetries: 3,
         abortSignal: undefined, // Could add abort controller for cancellation
       });
 
-      await this.processStream(result.textStream, messageId);
+      await this.processStructuredStream(result, messageId);
     } catch (error) {
       throw error; // Re-throw to be handled by the caller
     }
   }
 
-  private async processStream(
-    textStream: AsyncIterable<string>,
+  private async processStructuredStream(
+    result: Awaited<ReturnType<typeof streamObject<typeof ResponseWithCitationsSchema>>>,
     messageId: string
   ): Promise<void> {
-    let accumulatedText = "";
+    let currentResponse = "";
 
     // Create a placeholder assistant message
     const assistantMessage: CoreMessage = {
       role: "assistant",
       content: "",
     };
-    
+
     // Keep track of the index for updates
     const messageIndex = this.messages.length;
     this.messages.push(assistantMessage);
 
-    for await (const chunk of textStream) {
-      accumulatedText += chunk;
+    // Stream the partial objects as they arrive
+    for await (const partialObject of result.partialObjectStream) {
+      // Update response if available
+      if (partialObject.response !== undefined) {
+        const newContent = partialObject.response.slice(currentResponse.length);
+        currentResponse = partialObject.response;
 
-      // Update assistant message content
-      this.messages[messageIndex] = {
-        role: "assistant",
-        content: accumulatedText,
-      };
-      this.sendMessagesToRenderer();
+        // Update assistant message content
+        this.messages[messageIndex] = {
+          role: "assistant",
+          content: currentResponse,
+        };
+        this.sendMessagesToRenderer();
 
-      this.sendStreamChunk(messageId, {
-        content: chunk,
-        isComplete: false,
-      });
+        // Send incremental chunk
+        if (newContent) {
+          this.sendStreamChunk(messageId, {
+            content: newContent,
+            isComplete: false,
+          });
+        }
+      }
     }
+
+    // Get the final complete object
+    const finalObject = await result.object;
 
     // Final update with complete content
     this.messages[messageIndex] = {
       role: "assistant",
-      content: accumulatedText,
+      content: finalObject.response,
     };
+
+    // Store citations if present
+    if (finalObject.citations && finalObject.citations.length > 0) {
+      this.citations.set(messageIndex, finalObject.citations);
+    }
+
+    // Send messages to renderer AFTER storing citations
     this.sendMessagesToRenderer();
 
-    // Send the final complete signal
+    // Send the final complete signal with citations
     this.sendStreamChunk(messageId, {
-      content: accumulatedText,
+      content: finalObject.response,
       isComplete: true,
+      citations: finalObject.citations,
     });
   }
 
@@ -348,6 +408,7 @@ export class LLMClient {
       messageId,
       content: chunk.content,
       isComplete: chunk.isComplete,
+      citations: chunk.citations,
     });
   }
 }

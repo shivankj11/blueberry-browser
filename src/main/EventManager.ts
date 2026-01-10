@@ -171,7 +171,19 @@ export class EventManager {
 
     // Get messages
     ipcMain.handle("sidebar-get-messages", () => {
-      return this.mainWindow.sidebar.client.getMessages();
+      const messages = this.mainWindow.sidebar.client.getMessages();
+      const citationsMap = this.mainWindow.sidebar.client.getCitations();
+
+      // Convert citations map to a plain object for JSON serialization
+      const citationsObj: Record<number, any[]> = {};
+      citationsMap.forEach((value, key) => {
+        citationsObj[key] = value;
+      });
+
+      return {
+        messages,
+        citations: citationsObj,
+      };
     });
   }
 

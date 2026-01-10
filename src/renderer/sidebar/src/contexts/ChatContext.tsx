@@ -1,11 +1,17 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
 
+interface Citation {
+    text: string
+    source: "screenshot" | "page_content" | "url"
+}
+
 interface Message {
     id: string
     role: 'user' | 'assistant'
     content: string
     timestamp: number
     isStreaming?: boolean
+    citations?: Citation[]
 }
 
 interface ChatContextType {
@@ -40,19 +46,26 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     useEffect(() => {
         const loadMessages = async () => {
             try {
-                const storedMessages = await window.sidebarAPI.getMessages()
-                if (storedMessages && storedMessages.length > 0) {
-                    // Convert CoreMessage format to our frontend Message format
-                    const convertedMessages = storedMessages.map((msg: any, index: number) => ({
-                        id: `msg-${index}`,
-                        role: msg.role,
-                        content: typeof msg.content === 'string' 
-                            ? msg.content 
-                            : msg.content.find((p: any) => p.type === 'text')?.text || '',
-                        timestamp: Date.now(),
-                        isStreaming: false
-                    }))
-                    setMessages(convertedMessages)
+                const data = await window.sidebarAPI.getMessages()
+                if (data) {
+                    // Handle both old format (array) and new format (object with messages and citations)
+                    const storedMessages = Array.isArray(data) ? data : data.messages
+                    const citationsMap = Array.isArray(data) ? {} : (data.citations || {})
+
+                    if (storedMessages && storedMessages.length > 0) {
+                        // Convert CoreMessage format to our frontend Message format
+                        const convertedMessages = storedMessages.map((msg: any, index: number) => ({
+                            id: `msg-${index}`,
+                            role: msg.role,
+                            content: typeof msg.content === 'string'
+                                ? msg.content
+                                : msg.content.find((p: any) => p.type === 'text')?.text || '',
+                            timestamp: Date.now(),
+                            isStreaming: false,
+                            citations: citationsMap[index] || undefined
+                        }))
+                        setMessages(convertedMessages)
+                    }
                 }
             } catch (error) {
                 console.error('Failed to load messages:', error)
@@ -127,16 +140,21 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         // Listen for message updates from main process
-        const handleMessagesUpdated = (updatedMessages: any[]) => {
+        const handleMessagesUpdated = (data: any) => {
+            // Handle both old format (array) and new format (object with messages and citations)
+            const updatedMessages = Array.isArray(data) ? data : data.messages
+            const citationsMap = Array.isArray(data) ? {} : (data.citations || {})
+
             // Convert CoreMessage format to our frontend Message format
             const convertedMessages = updatedMessages.map((msg: any, index: number) => ({
                 id: `msg-${index}`,
                 role: msg.role,
-                content: typeof msg.content === 'string' 
-                    ? msg.content 
+                content: typeof msg.content === 'string'
+                    ? msg.content
                     : msg.content.find((p: any) => p.type === 'text')?.text || '',
                 timestamp: Date.now(),
-                isStreaming: false
+                isStreaming: false,
+                citations: citationsMap[index] || undefined
             }))
             setMessages(convertedMessages)
         }

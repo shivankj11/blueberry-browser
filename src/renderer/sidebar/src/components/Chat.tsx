@@ -7,12 +7,18 @@ import { useChat } from '../contexts/ChatContext'
 import { cn } from '@common/lib/utils'
 import { Button } from '@common/components/Button'
 
+interface Citation {
+    text: string
+    source: "screenshot" | "page_content" | "url"
+}
+
 interface Message {
     id: string
     role: 'user' | 'assistant'
     content: string
     timestamp: number
     isStreaming?: boolean
+    citations?: Citation[]
 }
 
 // Auto-scroll hook
@@ -74,20 +80,45 @@ const StreamingText: React.FC<{ content: string }> = ({ content }) => {
 // Citation Component - displays citation marker with tooltip
 const Citation: React.FC<{ tag: string; text: string }> = ({ tag, text }) => {
     const [isVisible, setIsVisible] = useState(false)
+    const [isHighlighting, setIsHighlighting] = useState(false)
+
+    const handleClick = async () => {
+        setIsHighlighting(true)
+        try {
+            const result = await window.sidebarAPI.highlightCitation(text)
+
+            if (!result.success) {
+                console.warn('Citation not found in page:', result.message)
+            } else {
+                console.log(`Highlighted ${result.matchCount} matches`)
+            }
+        } catch (error) {
+            console.error('Error highlighting citation:', error)
+        } finally {
+            setIsHighlighting(false)
+        }
+    }
 
     return (
         <span className="relative inline-block ml-0.5">
             <span
-                className="text-primary cursor-pointer hover:underline text-sm"
+                className={cn(
+                    "text-primary cursor-pointer hover:underline text-sm transition-opacity",
+                    isHighlighting && "opacity-50"
+                )}
                 onMouseEnter={() => setIsVisible(true)}
                 onMouseLeave={() => setIsVisible(false)}
+                onClick={handleClick}
             >
                 ({tag})
             </span>
             {isVisible && (
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2
                               bg-popover text-popover-foreground text-xs rounded-lg shadow-lg
-                              border border-border whitespace-nowrap z-50 animate-fade-in">
+                              border border-border max-w-2xl whitespace-normal z-50 animate-fade-in">
+                    <div className="mb-1 text-xs text-muted-foreground">
+                        Click to highlight in page
+                    </div>
                     {text}
                     <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px
                                   border-4 border-transparent border-t-popover" />
@@ -143,9 +174,10 @@ const Markdown: React.FC<{ content: string }> = ({ content }) => (
 )
 
 // Assistant Message Component - appears on the left
-const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean }> = ({
+const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean; citations?: Citation[] }> = ({
     content,
-    isStreaming
+    isStreaming,
+    citations
 }) => (
     <div className="relative w-full animate-fade-in">
         <div className="py-1">
@@ -154,7 +186,17 @@ const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean }> = (
             ) : (
                 <>
                     <Markdown content={content} />
-                    <Citation tag={"Source"} text="citation text" />
+                    {citations && citations.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                            {citations.map((citation, index) => (
+                                <Citation
+                                    key={index}
+                                    tag={`Source ${index + 1}`}
+                                    text={citation.text}
+                                />
+                            ))}
+                        </div>
+                    )}
                 </>
             )}
         </div>
@@ -280,6 +322,7 @@ const ConversationTurnComponent: React.FC<{
             <AssistantMessage
                 content={turn.assistant.content}
                 isStreaming={turn.assistant.isStreaming}
+                citations={turn.assistant.citations}
             />
         )}
         {isLoading && (
