@@ -99,6 +99,17 @@ const Citation: React.FC<{ tag: string; text: string }> = ({ tag, text }) => {
         }
     }
 
+    // Truncate text to max 20 words
+    const truncateText = (text: string, maxWords: number = 20): string => {
+        const words = text.trim().split(/\s+/)
+        if (words.length <= maxWords) {
+            return text
+        }
+        return words.slice(0, maxWords).join(' ') + '...'
+    }
+
+    const displayText = truncateText(text)
+
     return (
         <span className="relative inline-block ml-0.5">
             <span
@@ -115,11 +126,11 @@ const Citation: React.FC<{ tag: string; text: string }> = ({ tag, text }) => {
             {isVisible && (
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2
                               bg-popover text-popover-foreground text-xs rounded-lg shadow-lg
-                              border border-border max-w-2xl whitespace-normal z-50 animate-fade-in">
+                              border border-border max-w-8xl whitespace-normal z-50 animate-fade-in">
                     <div className="mb-1 text-xs text-muted-foreground">
                         Click to highlight in page
                     </div>
-                    {text}
+                    {displayText}
                     <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px
                                   border-4 border-transparent border-t-popover" />
                 </div>
