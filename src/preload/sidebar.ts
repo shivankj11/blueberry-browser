@@ -52,6 +52,12 @@ const sidebarAPI = {
 
   // Tab information
   getActiveTabInfo: () => electronAPI.ipcRenderer.invoke("get-active-tab-info"),
+
+  // Citation highlighting
+  highlightCitation: (citationText: string) =>
+    electronAPI.ipcRenderer.invoke("highlight-citation", citationText),
+  clearCitationHighlights: () =>
+    electronAPI.ipcRenderer.invoke("clear-citation-highlights"),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

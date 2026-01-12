@@ -23,6 +23,14 @@ interface TabInfo {
   isActive: boolean;
 }
 
+interface HighlightResult {
+  success: boolean;
+  matchCount: number;
+  highlighted?: boolean;
+  scrolled?: boolean;
+  message?: string;
+}
+
 interface SidebarAPI {
   // Chat functionality
   sendChatMessage: (request: ChatRequest) => Promise<void>;
@@ -36,6 +44,10 @@ interface SidebarAPI {
 
   // Tab information
   getActiveTabInfo: () => Promise<TabInfo | null>;
+
+  // Citation highlighting
+  highlightCitation: (citationText: string) => Promise<HighlightResult>;
+  clearCitationHighlights: () => Promise<{ success: boolean; message?: string }>;
 }
 
 declare global {
