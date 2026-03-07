@@ -21,8 +21,11 @@ declare global {
   }
 }
 
-function injectHighlighter(): void {
-  // jsdom does not support CSS.highlights – stub it so the code does not throw.
+function ensureCSSHighlightsStub(): void {
+  // jsdom does not expose a global CSS object with the Highlights API.
+  if (typeof globalThis.CSS === "undefined") {
+    (globalThis as any).CSS = {};
+  }
   if (!(CSS as any).highlights) {
     const store = new Map<string, unknown>();
     (CSS as any).highlights = {
@@ -31,8 +34,21 @@ function injectHighlighter(): void {
       delete: (k: string) => store.delete(k),
     };
   }
+}
 
-  // eslint-disable-next-line no-eval
+function injectHighlighter(): void {
+  ensureCSSHighlightsStub();
+
+  // jsdom doesn't have Highlight constructor – provide a minimal shim.
+  if (typeof globalThis.Highlight === "undefined") {
+    (globalThis as any).Highlight = class Highlight {
+      ranges: Range[];
+      constructor(...ranges: Range[]) {
+        this.ranges = ranges;
+      }
+    };
+  }
+
   const script = getInjectionScript();
   const fn = new Function(script);
   fn();

@@ -55,7 +55,10 @@ interface SidebarAPI {
   getActiveTabInfo: () => Promise<TabInfo | null>;
 
   highlightCitation: (citationText: string) => Promise<HighlightResult>;
-  clearCitationHighlights: () => Promise<{ success: boolean; message?: string }>;
+  clearCitationHighlights: () => Promise<{
+    success: boolean;
+    message?: string;
+  }>;
 }
 
 declare global {

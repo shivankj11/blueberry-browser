@@ -232,7 +232,7 @@ export class EventManager {
       if (this.mainWindow.activeTab) {
         try {
           return await this.mainWindow.activeTab.runJs(
-            getSearchAndHighlightCall(citationText)
+            getSearchAndHighlightCall(citationText),
           );
         } catch (error) {
           console.error("Error highlighting citation:", error);
@@ -247,7 +247,7 @@ export class EventManager {
       if (this.mainWindow.activeTab) {
         try {
           return await this.mainWindow.activeTab.runJs(
-            getClearHighlightsCall()
+            getClearHighlightsCall(),
           );
         } catch (error) {
           console.error("Error clearing highlights:", error);
@@ -275,7 +275,7 @@ export class EventManager {
     if (this.mainWindow.topBar.view.webContents !== sender) {
       this.mainWindow.topBar.view.webContents.send(
         "dark-mode-updated",
-        isDarkMode
+        isDarkMode,
       );
     }
 
@@ -283,7 +283,7 @@ export class EventManager {
     if (this.mainWindow.sidebar.view.webContents !== sender) {
       this.mainWindow.sidebar.view.webContents.send(
         "dark-mode-updated",
-        isDarkMode
+        isDarkMode,
       );
     }
 

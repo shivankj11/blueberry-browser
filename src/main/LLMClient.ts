@@ -24,9 +24,7 @@ const citeInputSchema = z.object({
   index: z
     .number()
     .describe("The citation number matching the [N] marker in your text"),
-  text: z
-    .string()
-    .describe("The exact quote or excerpt from the source"),
+  text: z.string().describe("The exact quote or excerpt from the source"),
   source: z
     .enum(["screenshot", "page_content", "url"])
     .describe("Where this information came from"),
@@ -100,14 +98,14 @@ export class LLMClient {
   private logInitializationStatus(): void {
     if (this.model) {
       console.log(
-        `LLM Client initialized with ${this.provider} provider using model: ${this.modelName}`
+        `LLM Client initialized with ${this.provider} provider using model: ${this.modelName}`,
       );
     } else {
       const keyName =
         this.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
       console.error(
         `LLM Client initialization failed: ${keyName} not found in environment variables.\n` +
-          `Please add your API key to the .env file in the project root.`
+          `Please add your API key to the .env file in the project root.`,
       );
     }
   }
@@ -146,7 +144,7 @@ export class LLMClient {
       if (!this.model) {
         this.sendErrorMessage(
           request.messageId,
-          "LLM service is not configured. Please add your API key to the .env file."
+          "LLM service is not configured. Please add your API key to the .env file.",
         );
         return;
       }
@@ -217,7 +215,7 @@ export class LLMClient {
 
   private buildSystemPrompt(
     url: string | null,
-    pageText: string | null
+    pageText: string | null,
   ): string {
     const parts: string[] = [
       "You are a helpful AI assistant integrated into a web browser.",
@@ -242,7 +240,7 @@ export class LLMClient {
       "- For each marker, call the 'cite' tool with the matching index, the exact source text, and the source type.",
       "- Only cite when you directly reference specific details, not for general knowledge.",
       "- Keep citations concise. For general questions, 0-2 citations are sufficient.",
-      "- Source types: 'page_content' for text, 'screenshot' for visual elements, 'url' for URL-based info."
+      "- Source types: 'page_content' for text, 'screenshot' for visual elements, 'url' for URL-based info.",
     );
 
     return parts.join("\n");
@@ -255,7 +253,7 @@ export class LLMClient {
 
   private async streamResponse(
     messages: CoreMessage[],
-    messageId: string
+    messageId: string,
   ): Promise<void> {
     if (!this.model) {
       throw new Error("Model not initialized");

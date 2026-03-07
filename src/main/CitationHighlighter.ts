@@ -68,18 +68,41 @@ export function getInjectionScript(): string {
           startIndex = endIndex;
         }
 
+        // Fallback: build a mapping from normalized text indices to original
+        // indices so whitespace differences don't prevent matching.
         if (ranges.length === 0) {
-          const normalizeWS = (str) => str.replace(/\\s+/g, ' ').trim();
-          const searchNorm = normalizeWS(searchLower);
-          const textNorm = normalizeWS(textLower);
-          const normIndex = textNorm.indexOf(searchNorm);
-          if (normIndex !== -1) {
-            const snippet = searchText.substring(0, Math.min(40, searchText.length));
-            const snippetIndex = textLower.indexOf(snippet.toLowerCase());
-            if (snippetIndex !== -1) {
-              const range = createRangeFromIndices(nodeMap, snippetIndex, snippetIndex + snippet.length);
+          const normToOrig = [];
+          let ni = 0;
+          let prevWasSpace = true;
+          for (let oi = 0; oi < textLower.length; oi++) {
+            const ch = textLower[oi];
+            const isWS = /\\s/.test(ch);
+            if (isWS) {
+              if (!prevWasSpace) {
+                normToOrig.push(oi);
+                ni++;
+              }
+              prevWasSpace = true;
+            } else {
+              normToOrig.push(oi);
+              ni++;
+              prevWasSpace = false;
+            }
+          }
+
+          const normalizedText = textLower.replace(/\\s+/g, ' ').trimStart();
+          const normalizedSearch = searchLower.replace(/\\s+/g, ' ').trim();
+
+          let nsi = 0;
+          while ((nsi = normalizedText.indexOf(normalizedSearch, nsi)) !== -1) {
+            const nEnd = nsi + normalizedSearch.length - 1;
+            if (nsi < normToOrig.length && nEnd < normToOrig.length) {
+              const origStart = normToOrig[nsi];
+              const origEnd = normToOrig[nEnd] + 1;
+              const range = createRangeFromIndices(nodeMap, origStart, origEnd);
               if (range) ranges.push(range);
             }
+            nsi = nsi + normalizedSearch.length;
           }
         }
 
