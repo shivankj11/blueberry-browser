@@ -1,41 +1,14 @@
 import { WebContents } from "electron";
-import { streamObject, type LanguageModel, type CoreMessage } from "ai";
+import { streamText, tool, type LanguageModel, type CoreMessage } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
 import * as dotenv from "dotenv";
 import { join } from "path";
-import type { Window } from "./Window";
 import { z } from "zod";
+import type { Window } from "./Window";
+import type { Citation, ChatRequest, StreamChunk } from "./types";
 
-// Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
-
-interface ChatRequest {
-  message: string;
-  messageId: string;
-}
-
-interface Citation {
-  text: string;
-  source: "screenshot" | "page_content" | "url";
-}
-
-interface StreamChunk {
-  content: string;
-  isComplete: boolean;
-  citations?: Citation[];
-}
-
-// Zod schema for structured LLM output with citations
-const CitationSchema = z.object({
-  text: z.string().describe("The exact quote or excerpt from the source that supports the answer"),
-  source: z.enum(["screenshot", "page_content", "url"]).describe("Where this information came from: screenshot, page_content, or url"),
-});
-
-const ResponseWithCitationsSchema = z.object({
-  response: z.string().describe("The main response to the user's question"),
-  citations: z.array(CitationSchema).describe("Array of citations with exact quotes from the page content or screenshot that support the response"),
-});
 
 type LLMProvider = "openai" | "anthropic";
 
@@ -47,6 +20,26 @@ const DEFAULT_MODELS: Record<LLMProvider, string> = {
 const MAX_CONTEXT_LENGTH = 4000;
 const DEFAULT_TEMPERATURE = 0.7;
 
+const citeInputSchema = z.object({
+  index: z
+    .number()
+    .describe("The citation number matching the [N] marker in your text"),
+  text: z
+    .string()
+    .describe("The exact quote or excerpt from the source"),
+  source: z
+    .enum(["screenshot", "page_content", "url"])
+    .describe("Where this information came from"),
+});
+
+const citeTool = tool({
+  description:
+    "Create a citation that references specific content from the page. " +
+    "Call this tool for each fact you cite. Use the same index number " +
+    "that you place in square brackets in your response text, e.g. [1].",
+  inputSchema: citeInputSchema,
+});
+
 export class LLMClient {
   private readonly webContents: WebContents;
   private window: Window | null = null;
@@ -54,18 +47,17 @@ export class LLMClient {
   private readonly modelName: string;
   private readonly model: LanguageModel | null;
   private messages: CoreMessage[] = [];
-  private citations: Map<number, Citation[]> = new Map();
+  private messageIds: string[] = [];
+  private citations: Map<string, Citation[]> = new Map();
 
   constructor(webContents: WebContents) {
     this.webContents = webContents;
     this.provider = this.getProvider();
     this.modelName = this.getModelName();
     this.model = this.initializeModel();
-
     this.logInitializationStatus();
   }
 
-  // Set the window reference after construction to avoid circular dependencies
   setWindow(window: Window): void {
     this.window = window;
   }
@@ -73,7 +65,7 @@ export class LLMClient {
   private getProvider(): LLMProvider {
     const provider = process.env.LLM_PROVIDER?.toLowerCase();
     if (provider === "anthropic") return "anthropic";
-    return "openai"; // Default to OpenAI
+    return "openai";
   }
 
   private getModelName(): string {
@@ -108,13 +100,13 @@ export class LLMClient {
   private logInitializationStatus(): void {
     if (this.model) {
       console.log(
-        `✅ LLM Client initialized with ${this.provider} provider using model: ${this.modelName}`
+        `LLM Client initialized with ${this.provider} provider using model: ${this.modelName}`
       );
     } else {
       const keyName =
         this.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
       console.error(
-        `❌ LLM Client initialization failed: ${keyName} not found in environment variables.\n` +
+        `LLM Client initialization failed: ${keyName} not found in environment variables.\n` +
           `Please add your API key to the .env file in the project root.`
       );
     }
@@ -122,7 +114,6 @@ export class LLMClient {
 
   async sendChatMessage(request: ChatRequest): Promise<void> {
     try {
-      // Get screenshot from active tab if available
       let screenshot: string | null = null;
       if (this.window) {
         const activeTab = this.window.activeTab;
@@ -136,32 +127,20 @@ export class LLMClient {
         }
       }
 
-      // Build user message content with screenshot first, then text
       const userContent: any[] = [];
-      
-      // Add screenshot as the first part if available
       if (screenshot) {
-        userContent.push({
-          type: "image",
-          image: screenshot,
-        });
+        userContent.push({ type: "image", image: screenshot });
       }
-      
-      // Add text content
-      userContent.push({
-        type: "text",
-        text: request.message,
-      });
+      userContent.push({ type: "text", text: request.message });
 
-      // Create user message in CoreMessage format
       const userMessage: CoreMessage = {
         role: "user",
         content: userContent.length === 1 ? request.message : userContent,
       };
-      
-      this.messages.push(userMessage);
 
-      // Send updated messages to renderer
+      const userMessageId = `user-${request.messageId}`;
+      this.messages.push(userMessage);
+      this.messageIds.push(userMessageId);
       this.sendMessagesToRenderer();
 
       if (!this.model) {
@@ -172,8 +151,8 @@ export class LLMClient {
         return;
       }
 
-      const messages = await this.prepareMessagesWithContext(request);
-      await this.streamResponse(messages, request.messageId);
+      const preparedMessages = await this.prepareMessagesWithContext();
+      await this.streamResponse(preparedMessages, request.messageId);
     } catch (error) {
       console.error("Error in LLM request:", error);
       this.handleStreamError(error, request.messageId);
@@ -182,6 +161,7 @@ export class LLMClient {
 
   clearMessages(): void {
     this.messages = [];
+    this.messageIds = [];
     this.citations.clear();
     this.sendMessagesToRenderer();
   }
@@ -190,28 +170,31 @@ export class LLMClient {
     return this.messages;
   }
 
-  getCitations(): Map<number, Citation[]> {
+  getMessageIds(): string[] {
+    return this.messageIds;
+  }
+
+  getCitations(): Map<string, Citation[]> {
     return this.citations;
   }
 
   private sendMessagesToRenderer(): void {
-    // Convert citations map to a plain object for JSON serialization
-    const citationsObj: Record<number, Citation[]> = {};
+    const citationsObj: Record<string, Citation[]> = {};
     this.citations.forEach((value, key) => {
       citationsObj[key] = value;
     });
 
     this.webContents.send("chat-messages-updated", {
       messages: this.messages,
+      messageIds: this.messageIds,
       citations: citationsObj,
     });
   }
 
-  private async prepareMessagesWithContext(_request: ChatRequest): Promise<CoreMessage[]> {
-    // Get page context from active tab
+  private async prepareMessagesWithContext(): Promise<CoreMessage[]> {
     let pageUrl: string | null = null;
     let pageText: string | null = null;
-    
+
     if (this.window) {
       const activeTab = this.window.activeTab;
       if (activeTab) {
@@ -224,17 +207,18 @@ export class LLMClient {
       }
     }
 
-    // Build system message
     const systemMessage: CoreMessage = {
       role: "system",
       content: this.buildSystemPrompt(pageUrl, pageText),
     };
 
-    // Include all messages in history (system + conversation)
     return [systemMessage, ...this.messages];
   }
 
-  private buildSystemPrompt(url: string | null, pageText: string | null): string {
+  private buildSystemPrompt(
+    url: string | null,
+    pageText: string | null
+  ): string {
     const parts: string[] = [
       "You are a helpful AI assistant integrated into a web browser.",
       "You can analyze and discuss web pages with the user.",
@@ -253,14 +237,12 @@ export class LLMClient {
     parts.push(
       "\nPlease provide helpful, accurate, and contextual responses about the current webpage.",
       "If the user asks about specific content, refer to the page content and/or screenshot provided.",
-      "\n\nCITATION GUIDELINES:",
-      "- Only include citations when you directly reference SPECIFIC information from the page content, screenshot, or URL.",
-      "- Citations should be VERY concise and only refer to SPECIFIC details, not general information.",
-      "- Do NOT over-cite. For general questions about what a website is, 0-2 citations are sufficient.",
-      "- Citations should contain the EXACT text/quote from the source that supports your answer.",
-      "- Specify the source type: 'page_content' (for text content), 'screenshot' (for visual elements), or 'url' (for URL-based info).",
-      "- If you're providing general knowledge or common information about a website, you don't need citations.",
-      "- Only cite when it adds value and supports specific claims you're making."
+      "\nCITATION GUIDELINES:",
+      "- When you reference SPECIFIC information from the page, include inline markers like [1], [2], etc.",
+      "- For each marker, call the 'cite' tool with the matching index, the exact source text, and the source type.",
+      "- Only cite when you directly reference specific details, not for general knowledge.",
+      "- Keep citations concise. For general questions, 0-2 citations are sufficient.",
+      "- Source types: 'page_content' for text, 'screenshot' for visual elements, 'url' for URL-based info."
     );
 
     return parts.join("\n");
@@ -279,89 +261,73 @@ export class LLMClient {
       throw new Error("Model not initialized");
     }
 
-    try {
-      const result = await streamObject({
-        model: this.model,
-        messages,
-        schema: ResponseWithCitationsSchema,
-        maxRetries: 3,
-        abortSignal: undefined, // Could add abort controller for cancellation
-      });
-
-      await this.processStructuredStream(result, messageId);
-    } catch (error) {
-      throw error; // Re-throw to be handled by the caller
-    }
-  }
-
-  private async processStructuredStream(
-    result: Awaited<ReturnType<typeof streamObject<typeof ResponseWithCitationsSchema>>>,
-    messageId: string
-  ): Promise<void> {
-    let currentResponse = "";
-
-    // Create a placeholder assistant message
-    const assistantMessage: CoreMessage = {
-      role: "assistant",
-      content: "",
-    };
-
-    // Keep track of the index for updates
+    const assistantMessageId = `assistant-${messageId}`;
+    const assistantMessage: CoreMessage = { role: "assistant", content: "" };
     const messageIndex = this.messages.length;
     this.messages.push(assistantMessage);
+    this.messageIds.push(assistantMessageId);
 
-    // Stream the partial objects as they arrive
-    for await (const partialObject of result.partialObjectStream) {
-      // Update response if available
-      if (partialObject.response !== undefined) {
-        const newContent = partialObject.response.slice(currentResponse.length);
-        currentResponse = partialObject.response;
+    let currentText = "";
 
-        // Update assistant message content
+    const result = streamText({
+      model: this.model,
+      messages,
+      tools: { cite: citeTool },
+      toolChoice: "auto",
+      temperature: DEFAULT_TEMPERATURE,
+      maxRetries: 3,
+      onError: ({ error }) => {
+        console.error("Stream error:", error);
+      },
+    });
+
+    try {
+      for await (const textPart of result.textStream) {
+        currentText += textPart;
         this.messages[messageIndex] = {
           role: "assistant",
-          content: currentResponse,
+          content: currentText,
         };
         this.sendMessagesToRenderer();
-
-        // Send incremental chunk
-        if (newContent) {
-          this.sendStreamChunk(messageId, {
-            content: newContent,
-            isComplete: false,
-          });
-        }
+        this.sendStreamChunk(messageId, {
+          content: textPart,
+          isComplete: false,
+        });
       }
+
+      const toolCalls = await result.toolCalls;
+      const citations: Citation[] = toolCalls
+        .filter((tc) => tc.toolName === "cite")
+        .map((tc) => {
+          const input = tc.input as z.infer<typeof citeInputSchema>;
+          return {
+            index: input.index,
+            text: input.text,
+            source: input.source,
+          };
+        })
+        .sort((a, b) => a.index - b.index);
+
+      const finalText = await result.text;
+      this.messages[messageIndex] = { role: "assistant", content: finalText };
+
+      if (citations.length > 0) {
+        this.citations.set(assistantMessageId, citations);
+      }
+
+      this.sendMessagesToRenderer();
+      this.sendStreamChunk(messageId, {
+        content: finalText,
+        isComplete: true,
+        citations,
+      });
+    } catch (error) {
+      this.handleStreamError(error, messageId);
     }
-
-    // Get the final complete object
-    const finalObject = await result.object;
-
-    // Final update with complete content
-    this.messages[messageIndex] = {
-      role: "assistant",
-      content: finalObject.response,
-    };
-
-    // Store citations if present
-    if (finalObject.citations && finalObject.citations.length > 0) {
-      this.citations.set(messageIndex, finalObject.citations);
-    }
-
-    // Send messages to renderer AFTER storing citations
-    this.sendMessagesToRenderer();
-
-    // Send the final complete signal with citations
-    this.sendStreamChunk(messageId, {
-      content: finalObject.response,
-      isComplete: true,
-      citations: finalObject.citations,
-    });
   }
 
   private handleStreamError(error: unknown, messageId: string): void {
     console.error("Error streaming from LLM:", error);
-
     const errorMessage = this.getErrorMessage(error);
     this.sendErrorMessage(messageId, errorMessage);
   }
@@ -376,11 +342,9 @@ export class LLMClient {
     if (message.includes("401") || message.includes("unauthorized")) {
       return "Authentication error: Please check your API key in the .env file.";
     }
-
     if (message.includes("429") || message.includes("rate limit")) {
       return "Rate limit exceeded. Please try again in a few moments.";
     }
-
     if (
       message.includes("network") ||
       message.includes("fetch") ||
@@ -388,7 +352,6 @@ export class LLMClient {
     ) {
       return "Network error: Please check your internet connection.";
     }
-
     if (message.includes("timeout")) {
       return "Request timeout: The service took too long to respond. Please try again.";
     }

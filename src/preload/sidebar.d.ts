@@ -2,11 +2,6 @@ import { ElectronAPI } from "@electron-toolkit/preload";
 
 interface ChatRequest {
   message: string;
-  context: {
-    url: string | null;
-    content: string | null;
-    text: string | null;
-  };
   messageId: string;
 }
 
@@ -14,6 +9,12 @@ interface ChatResponse {
   messageId: string;
   content: string;
   isComplete: boolean;
+}
+
+interface Citation {
+  index: number;
+  text: string;
+  source: "screenshot" | "page_content" | "url";
 }
 
 interface TabInfo {
@@ -31,21 +32,28 @@ interface HighlightResult {
   message?: string;
 }
 
-interface SidebarAPI {
-  // Chat functionality
-  sendChatMessage: (request: ChatRequest) => Promise<void>;
-  onChatResponse: (callback: (data: ChatResponse) => void) => void;
-  removeChatResponseListener: () => void;
+interface MessagesData {
+  messages: any[];
+  messageIds: string[];
+  citations: Record<string, Citation[]>;
+}
 
-  // Page content access
+interface SidebarAPI {
+  sendChatMessage: (request: ChatRequest) => Promise<void>;
+  clearChat: () => Promise<boolean>;
+  getMessages: () => Promise<MessagesData>;
+
+  onChatResponse: (callback: (data: ChatResponse) => void) => void;
+  onMessagesUpdated: (callback: (data: MessagesData) => void) => void;
+  removeChatResponseListener: () => void;
+  removeMessagesUpdatedListener: () => void;
+
   getPageContent: () => Promise<string | null>;
   getPageText: () => Promise<string | null>;
   getCurrentUrl: () => Promise<string | null>;
 
-  // Tab information
   getActiveTabInfo: () => Promise<TabInfo | null>;
 
-  // Citation highlighting
   highlightCitation: (citationText: string) => Promise<HighlightResult>;
   clearCitationHighlights: () => Promise<{ success: boolean; message?: string }>;
 }
@@ -56,4 +64,3 @@ declare global {
     sidebarAPI: SidebarAPI;
   }
 }
-

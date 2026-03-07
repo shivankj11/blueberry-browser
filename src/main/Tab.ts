@@ -1,4 +1,5 @@
 import { NativeImage, WebContentsView } from "electron";
+import { getInjectionScript } from "./CitationHighlighter";
 
 export class Tab {
   private webContentsView: WebContentsView;
@@ -30,18 +31,25 @@ export class Tab {
   }
 
   private setupEventListeners(): void {
-    // Update title when page title changes
     this.webContentsView.webContents.on("page-title-updated", (_, title) => {
       this._title = title;
     });
 
-    // Update URL when navigation occurs
     this.webContentsView.webContents.on("did-navigate", (_, url) => {
       this._url = url;
     });
 
     this.webContentsView.webContents.on("did-navigate-in-page", (_, url) => {
       this._url = url;
+    });
+
+    // Inject the citation highlighter once the DOM is ready on every page load.
+    this.webContentsView.webContents.on("dom-ready", () => {
+      this.webContentsView.webContents
+        .executeJavaScript(getInjectionScript())
+        .catch(() => {
+          // Silently ignore injection failures (e.g. about:blank)
+        });
     });
   }
 

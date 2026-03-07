@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
 
 interface Citation {
+    index: number
     text: string
     source: "screenshot" | "page_content" | "url"
 }
@@ -18,11 +19,9 @@ interface ChatContextType {
     messages: Message[]
     isLoading: boolean
 
-    // Chat actions
     sendMessage: (content: string) => Promise<void>
     clearChat: () => void
 
-    // Page content access
     getPageContent: () => Promise<string | null>
     getPageText: () => Promise<string | null>
     getCurrentUrl: () => Promise<string | null>
@@ -38,35 +37,42 @@ export const useChat = () => {
     return context
 }
 
+function convertMessagesData(data: any): Message[] {
+    if (!data) return []
+
+    const rawMessages = Array.isArray(data) ? data : data.messages
+    const messageIds: string[] = Array.isArray(data) ? [] : (data.messageIds || [])
+    const citationsMap: Record<string, Citation[]> = Array.isArray(data)
+        ? {}
+        : (data.citations || {})
+
+    if (!rawMessages || rawMessages.length === 0) return []
+
+    return rawMessages.map((msg: any, index: number) => {
+        const id = messageIds[index] || `msg-${index}`
+        return {
+            id,
+            role: msg.role,
+            content: typeof msg.content === 'string'
+                ? msg.content
+                : msg.content?.find((p: any) => p.type === 'text')?.text || '',
+            timestamp: Date.now(),
+            isStreaming: false,
+            citations: citationsMap[id] || undefined,
+        }
+    })
+}
+
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [messages, setMessages] = useState<Message[]>([])
     const [isLoading, setIsLoading] = useState(false)
 
-    // Load initial messages from main process
     useEffect(() => {
         const loadMessages = async () => {
             try {
                 const data = await window.sidebarAPI.getMessages()
-                if (data) {
-                    // Handle both old format (array) and new format (object with messages and citations)
-                    const storedMessages = Array.isArray(data) ? data : data.messages
-                    const citationsMap = Array.isArray(data) ? {} : (data.citations || {})
-
-                    if (storedMessages && storedMessages.length > 0) {
-                        // Convert CoreMessage format to our frontend Message format
-                        const convertedMessages = storedMessages.map((msg: any, index: number) => ({
-                            id: `msg-${index}`,
-                            role: msg.role,
-                            content: typeof msg.content === 'string'
-                                ? msg.content
-                                : msg.content.find((p: any) => p.type === 'text')?.text || '',
-                            timestamp: Date.now(),
-                            isStreaming: false,
-                            citations: citationsMap[index] || undefined
-                        }))
-                        setMessages(convertedMessages)
-                    }
-                }
+                const converted = convertMessagesData(data)
+                if (converted.length > 0) setMessages(converted)
             } catch (error) {
                 console.error('Failed to load messages:', error)
             }
@@ -76,17 +82,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const sendMessage = useCallback(async (content: string) => {
         setIsLoading(true)
-
         try {
             const messageId = Date.now().toString()
-
-            // Send message to main process (which will handle context)
             await window.sidebarAPI.sendChatMessage({
                 message: content,
-                messageId: messageId
+                messageId,
             })
-
-            // Messages will be updated via the chat-messages-updated event
         } catch (error) {
             console.error('Failed to send message:', error)
         } finally {
@@ -104,59 +105,27 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, [])
 
     const getPageContent = useCallback(async () => {
-        try {
-            return await window.sidebarAPI.getPageContent()
-        } catch (error) {
-            console.error('Failed to get page content:', error)
-            return null
-        }
+        try { return await window.sidebarAPI.getPageContent() }
+        catch { return null }
     }, [])
 
     const getPageText = useCallback(async () => {
-        try {
-            return await window.sidebarAPI.getPageText()
-        } catch (error) {
-            console.error('Failed to get page text:', error)
-            return null
-        }
+        try { return await window.sidebarAPI.getPageText() }
+        catch { return null }
     }, [])
 
     const getCurrentUrl = useCallback(async () => {
-        try {
-            return await window.sidebarAPI.getCurrentUrl()
-        } catch (error) {
-            console.error('Failed to get current URL:', error)
-            return null
-        }
+        try { return await window.sidebarAPI.getCurrentUrl() }
+        catch { return null }
     }, [])
 
-    // Set up message listeners
     useEffect(() => {
-        // Listen for streaming response updates
         const handleChatResponse = (data: { messageId: string; content: string; isComplete: boolean }) => {
-            if (data.isComplete) {
-                setIsLoading(false)
-            }
+            if (data.isComplete) setIsLoading(false)
         }
 
-        // Listen for message updates from main process
         const handleMessagesUpdated = (data: any) => {
-            // Handle both old format (array) and new format (object with messages and citations)
-            const updatedMessages = Array.isArray(data) ? data : data.messages
-            const citationsMap = Array.isArray(data) ? {} : (data.citations || {})
-
-            // Convert CoreMessage format to our frontend Message format
-            const convertedMessages = updatedMessages.map((msg: any, index: number) => ({
-                id: `msg-${index}`,
-                role: msg.role,
-                content: typeof msg.content === 'string'
-                    ? msg.content
-                    : msg.content.find((p: any) => p.type === 'text')?.text || '',
-                timestamp: Date.now(),
-                isStreaming: false,
-                citations: citationsMap[index] || undefined
-            }))
-            setMessages(convertedMessages)
+            setMessages(convertMessagesData(data))
         }
 
         window.sidebarAPI.onChatResponse(handleChatResponse)
@@ -175,7 +144,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clearChat,
         getPageContent,
         getPageText,
-        getCurrentUrl
+        getCurrentUrl,
     }
 
     return (
@@ -184,4 +153,3 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         </ChatContext.Provider>
     )
 }
-

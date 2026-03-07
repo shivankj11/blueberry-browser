@@ -3,11 +3,6 @@ import { electronAPI } from "@electron-toolkit/preload";
 
 interface ChatRequest {
   message: string;
-  context: {
-    url: string | null;
-    content: string | null;
-    text: string | null;
-  };
   messageId: string;
 }
 
